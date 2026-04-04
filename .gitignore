@@ -9,9 +9,6 @@ venv/
 *.sqlite
 *.sqlite3
 
-# Test/generated output
-test_results.csv
-
 # Python
 __pycache__/
 *.py[cod]

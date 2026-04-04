@@ -1199,9 +1199,8 @@ class OrchestratorAgent(ToolCallingAgent):
         self.quoting_agent = QuotingAgent(model)
         self.sales_agent = SalesAgent(model)
         self.business_advisor = BusinessAdvisorAgent(model)
-        self.customer_negotiator = CustomerNegotiator(model)
     
-    def process_request(self, customer_request: str, request_date: str, customer_context: Dict = None, enable_negotiation: bool = True, show_animation: bool = False) -> str:
+    def process_request(self, customer_request: str, request_date: str, customer_context: Dict = None, show_animation: bool = False) -> str:
         """
         Process a customer request by coordinating the appropriate agents.
         
@@ -1285,56 +1284,10 @@ class OrchestratorAgent(ToolCallingAgent):
             
             # Check if items are actually available - if so, try to finalize sale
             items_available = not ("out of stock" in inventory_check.lower() or "not available" in inventory_check.lower() or "shortfall" in inventory_check.lower())
-            
-            # Customer negotiation if enabled and context provided
-            if enable_negotiation and customer_context:
-                if show_animation:
-                    print_agent_activity("CustomerNegotiator", "Negotiating on customer's behalf", "working")
-                negotiated_response = self.customer_negotiator.negotiate(
-                    customer_context, quote_response, request_date
-                )
-                if show_animation:
-                    print_agent_complete("CustomerNegotiator")
-                
-                # If customer wants to negotiate, generate revised quote
-                if "negotiate" in negotiated_response.lower() or "better" in negotiated_response.lower() or "discount" in negotiated_response.lower():
-                    if show_animation:
-                        print_agent_activity("QuotingAgent", "Revising quote based on negotiation", "working")
-                    revised_quote = self.quoting_agent.run(
-                        f"Customer negotiation request: {negotiated_response}. "
-                        f"Original quote: {quote_response}. "
-                        f"Revise the quote to address customer concerns while maintaining profitability. "
-                        f"Provide the revised quote with explanation."
-                    )
-                    if show_animation:
-                        print_agent_complete("QuotingAgent")
-                    return f"After negotiation, here's our revised offer:\n\n{revised_quote}"
-                else:
-                    # Customer accepts - if items available, finalize the sale
-                    if items_available:
-                        if show_animation:
-                            print_agent_activity("SalesAgent", "Finalizing accepted quote", "working")
-                        sale_response = self.sales_agent.run(
-                            f"The customer has accepted the quote. Finalize this sale: {customer_request}. "
-                            f"Sale date: {request_date}. "
-                            f"Inventory status: {inventory_check}. "
-                            f"Quote details: {quote_response}. "
-                            f"Extract the items and quantities from the request and quote. "
-                            f"For each available item, you MUST: 1) Use check_item_stock to verify, "
-                            f"2) Use get_item_unit_price to get the correct unit price (NEVER use $0.00), "
-                            f"3) Use finalize_sale with exact item_name, quantity, unit_price (from step 2), and sale_date. "
-                            f"Create separate transactions for each item. Provide confirmation with all transaction IDs and correct pricing."
-                        )
-                        if show_animation:
-                            print_agent_complete("SalesAgent")
-                        return f"Customer accepts the quote. {sale_response}"
-                    else:
-                        return f"Customer accepts the quote. {quote_response}"
-            
-            # If no negotiation but items available, offer to finalize
+
             if items_available:
                 return f"{quote_response}\n\nWould you like to proceed with this order? Please confirm to finalize your purchase."
-            
+
             return quote_response
         
         # Handle purchase/order confirmation
@@ -1374,17 +1327,7 @@ class OrchestratorAgent(ToolCallingAgent):
             if show_animation:
                 print_agent_complete("SalesAgent")
             
-            # Get business advisor recommendations after sale
-            if show_animation:
-                print_agent_activity("BusinessAdvisorAgent", "Analyzing transaction impact", "working")
-            advisor_recommendations = self.business_advisor.run(
-                f"Analyze the business after this sale. Date: {request_date}. "
-                f"Provide recommendations for improving operations."
-            )
-            if show_animation:
-                print_agent_complete("BusinessAdvisorAgent")
-            
-            return f"{sale_response}\n\n📊 Business Advisor Note: {advisor_recommendations[:200]}..."
+            return sale_response
         
         # Default: treat as quote request
         inventory_check = self.inventory_agent.run(
@@ -1400,51 +1343,6 @@ class OrchestratorAgent(ToolCallingAgent):
         
         return quote_response
 
-# Customer negotiation helper class
-class CustomerNegotiator:
-    """Helper class to handle customer negotiations using customer context."""
-    
-    def __init__(self, model: OpenAIServerModel):
-        self.model = model
-        self.negotiation_agent = ToolCallingAgent(
-            tools=[],
-            model=model,
-            name="customer_negotiator",
-            description="Represents the customer perspective and can negotiate prices, quantities, and terms based on customer context."
-        )
-    
-    def negotiate(self, customer_context: Dict, initial_quote: str, request_date: str) -> str:
-        """
-        Negotiate with the sales team on behalf of the customer.
-        
-        Args:
-            customer_context: Dictionary with customer info (job, need_size, event)
-            initial_quote: The initial quote from the quoting agent
-            request_date: The date of the request
-            
-        Returns:
-            Negotiated response or acceptance
-        """
-        job = customer_context.get("job", "customer")
-        need_size = customer_context.get("need_size", "medium")
-        event = customer_context.get("event", "event")
-        
-        negotiation_prompt = f"""You are representing a customer who is a {job} organizing a {event}. 
-        The customer has a {need_size} order size.
-        
-        The sales team has provided this initial quote:
-        {initial_quote}
-        
-        Based on the customer's context and needs, negotiate for:
-        1. Better pricing (especially for bulk orders)
-        2. Faster delivery if needed
-        3. Alternative items if original items are unavailable
-        4. Payment terms if applicable
-        
-        Be reasonable but advocate for the customer. If the quote is already good, accept it.
-        Provide your negotiation response or acceptance."""
-        
-        return self.negotiation_agent.run(negotiation_prompt)
 
 # Terminal animation helper
 def print_agent_activity(agent_name: str, activity: str, status: str = "working"):
@@ -1575,26 +1473,19 @@ def run_test_scenarios():
         # Process request with animation and negotiation
         try:
             response = orchestrator.process_request(
-                row['request'], 
+                row['request'],
                 request_date,
                 customer_context=customer_context,
-                enable_negotiation=True,  # Enable customer negotiation
-                show_animation=True       # Enable terminal animation
+                show_animation=True
             )
         except KeyboardInterrupt:
             print("\n⚠️ Test interrupted by user. Saving partial results...")
             break
         except Exception as e:
+            import traceback
             print(f"❌ Error processing request {idx+1}: {e}")
-            import traceback
             traceback.print_exc()
-            response = f"I apologize, but I encountered an error processing your request: {str(e)}"
-            # Continue processing even if there's an error
-        except:
-            print(f"❌ Unexpected error processing request {idx+1}")
-            import traceback
-            traceback.print_exc()
-            response = "I apologize, but I encountered an unexpected error processing your request."
+            response = "I'm sorry, we were unable to process your request at this time. Please try again or contact us directly for assistance."
 
         # Update state
         report = generate_financial_report(request_date)
